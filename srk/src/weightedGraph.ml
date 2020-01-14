@@ -70,6 +70,10 @@ let remove_vertex wg u =
   { wg with graph = U.remove_vertex wg.graph u;
             labels = labels }
 
+let remove_edge wg u w =
+  { wg with graph = U.remove_edge wg.graph u w;
+            labels = M.remove (u, w) wg.labels }
+
 let contract_vertex wg v =
   (* List of all { (s, w(v,v)*w(v,s)) : (v,s) in E } *)
   let star x = wg.algebra.star x in

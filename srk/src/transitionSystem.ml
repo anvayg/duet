@@ -84,11 +84,22 @@ module Make
       let hash (s, _, d) = Hashtbl.hash (s, d)
     end
 
+    let add_vertex = WG.add_vertex
+    let remove_vertex = WG.remove_vertex
+    let add_edge = WG.add_edge
+    let remove_edge = WG.remove_edge
     let iter_edges_e = WG.iter_edges
+    let fold_edges_e = WG.fold_edges
     let iter_vertex = WG.iter_vertex
     let iter_succ f tg v =
       WG.U.iter_succ f (WG.forget_weights tg) v
     let fold_pred_e = WG.fold_pred_e
+    let fold_vertex = WG.fold_vertex
+    let pred tg v = WG.fold_pred_e (fun (p, _, _) l -> p :: l) tg v []
+    let succ tg v = WG.fold_succ_e (fun (_, _, s) l -> s :: l) tg v []
+    let nb_vertex tg = WG.fold_vertex (fun v n -> n + 1) tg 0
+    let max_vertex = WG.max_vertex
+    let edge_weight = WG.edge_weight
   end
 
   module Wto = Graph.WeakTopological.Make(WGG)
@@ -837,4 +848,119 @@ module Make
         D.bottom
     in
     WG.forward_analysis tg ~entry ~update ~init
+
+
+  module WGF = struct
+    type t = C.t formula WG.t
+
+    module V = struct
+      include SrkUtil.Int
+      type label = int
+        let label x = x
+      let create x = x
+    end
+
+    module E = struct
+      type label = C.t formula
+      type vertex = int
+      type t = int *
+               ((int VarMap.t) *
+                ((symbol * symbol) list) * C.t formula *
+                (int VarMap.t)) *
+               int
+      let src (x, _, _) = x
+      let dst (_, _, x) = x
+      let label (_, x, _) = x
+      let create x y z = (x, y, z)
+      let equal (s1, _, d1) (s2, _, d2) = s1 = s2 && d1 = d2
+      let hash (s, _, _, _, d) = Hashtbl.hash (s, d)
+    end
+
+    let empty = WG.empty
+    let add_vertex = WG.add_vertex
+    let remove_vertex = WG.remove_vertex
+    let add_edge = WG.add_edge
+    let remove_edge = WG.remove_edge
+    let iter_edges_e = WG.iter_edges
+    let iter_vertex = WG.iter_vertex
+    let iter_succ f tg v =
+      WG.U.iter_succ f (WG.forget_weights tg) v
+    let fold_pred_e = WG.fold_pred_e
+    let fold_vertex = WG.fold_vertex
+    let pred tg v = WG.fold_pred_e (fun (p, _, _) l -> p :: l) tg v []
+    let succ tg v = WG.fold_succ_e (fun (_, _, s) l -> s :: l) tg v []
+    let nb_vertex tg = WG.fold_vertex (fun v n -> n + 1) tg 0
+    let max_vertex = WG.max_vertex
+    let edge_weight = WG.edge_weight
+  end
+
+
+  module Wdo = Graph.Dominator.Make(WGG)
+
+  (* Reverse DFS postorder of a DAG is topological order *)
+  module Tlo = Graph.Topological.Make(WGG)
+
+  let loop_headers cfg =
+    let idom = Wdo.compute_idom cfg 0 in
+    let dom_tree = Wdo.idom_to_dom_tree cfg idom in 
+    WGG.fold_vertex
+      (fun v s ->
+         let dom_vertices = Int.Set.of_list (dom_tree v) in
+         WGG.fold_pred_e
+           (fun (p, _, _) s ->
+              if Int.Set.mem p dom_vertices then
+                PS.add (p, v) s
+              else
+                s)
+           cfg v s)
+      cfg
+      PS.empty
+
+  let remove_backedges cfg bs =
+    PS.fold
+      (fun (v, h) cfg ->
+         let post_vertex = WGG.max_vertex cfg + 1 in
+         let label = WGG.edge_weight cfg v h in
+         let cfg' = WGG.add_vertex cfg post_vertex in
+         WGG.add_edge (WGG.remove_edge cfg' v h) v label post_vertex)
+      bs cfg
+
+  let get_headers bs =
+    PS.fold
+      (fun (_, h) s ->
+         Int.Set.add h s)
+      bs Int.Set.empty
+
+  let insert_preheaders cfg lhs =
+    Int.Set.fold
+      (fun h cfg ->
+         let pre_vertex = (WGG.max_vertex cfg) + 1 in
+         let cfg' =
+           WGG.add_edge
+             (WGG.add_vertex cfg pre_vertex)
+             pre_vertex
+             (T.assume (mk_true srk))
+             h
+         in 
+         WGG.fold_pred_e
+           (fun (src, t, _) cfg ->  
+              let cfg' = WGG.remove_edge cfg src h in
+              WGG.add_edge cfg' src t pre_vertex)
+           cfg' h cfg')
+      lhs cfg
+
+  let cvt_weights_to_formulas cfg mk_cfg =
+    let cfg_f =
+      WGG.fold_vertex
+        (fun v g ->
+           WGF.add_vertex g v)
+        cfg mk_cfg
+    in
+    WGG.fold_edges_e
+      (fun (src, t, dest) g ->
+         let f = Transition.to_transition_formula in
+         WGF.add_edge )
+      cfg cfg_f 
+  
+  
 end
