@@ -9,7 +9,6 @@ module Int = SrkUtil.Int
 type 'a label = 'a WeightedGraph.label =
   | Weight of 'a
   | Call of int * int
-[@@deriving ord]
 
 module Make
     (C : sig
@@ -36,7 +35,6 @@ module Make
        val mem_transform : var -> t -> bool
        val get_transform : var -> t -> C.t term
        val assume : C.t formula -> t
-       val compare : t -> t -> int
        val equal : t -> t -> bool
        val mul : t -> t -> t
        val add : t -> t -> t
@@ -50,7 +48,7 @@ module Make
 
   type vertex = int
   type transition = T.t
-  type tlabel = T.t label [@@deriving ord]
+  type tlabel = T.t label
 
   include WeightedGraph.MakeRecGraph(struct
       include T
@@ -61,27 +59,11 @@ module Make
   module WGG = struct
     type t = T.t label WG.t
 
-    module V = struct
-      include SrkUtil.Int
-      type label = int
-      let label x = x
-      let create x = x
-    end
+    module V = SrkUtil.Int
 
     module E = struct
-      type label = tlabel
-      type vertex = int
-      type t = int * tlabel * int [@@deriving ord]
+      type t = int * tlabel * int
       let src (x, _, _) = x
-      let dst (_, _, x) = x
-      let label (_, x, _) = x
-      let create x y z = (x, y, z)
-
-      (* Weighted graphs have at most one edge between any pair of
-         node, so sufficient to hash / check equality using endpoints
-         *)
-      let equal (s1, _, d1) (s2, _, d2) = s1 = s2 && d1 = d2
-      let hash (s, _, d) = Hashtbl.hash (s, d)
     end
 
     let add_vertex = WG.add_vertex
@@ -107,12 +89,6 @@ module Make
   module VarSet = BatSet.Make(Var)
 
   let srk = C.context
-
-  let defines tr =
-    BatEnum.fold
-      (fun defs (var, _) -> VarSet.add var defs)
-      VarSet.empty
-      (T.transform tr)
 
   let uses tr =
     BatEnum.fold
@@ -146,7 +122,7 @@ module Make
           | None -> vars)
     in
     BatEnum.fold
-      (fun refs (var, term) -> VarSet.add var refs)
+      (fun refs (var, _) -> VarSet.add var refs)
       (add_symbols (symbols (T.guard tr)) VarSet.empty)
       (T.transform tr)
 
@@ -234,7 +210,7 @@ module Make
           end);
       mk_and srk (!boxes)
 
-    let analyze (_s, label, t) prop =
+    let analyze (_s, label, _t) prop =
       let context = Z3.mk_context [("timeout", "100")] in
       match prop, label with
       | Bottom, _ -> Bottom
@@ -566,7 +542,7 @@ module Make
     let rec invariants inv wto =
       let open Graph.WeakTopological in
       match wto with
-      | Vertex v -> inv
+      | Vertex _ -> inv
       | Component (v, rest) ->
         let invariant =
           match IntervalAnalysis.M.find v result with
@@ -643,7 +619,7 @@ module Make
     let rec invariants inv wto =
       let open Graph.WeakTopological in
       match wto with
-      | Vertex v -> inv
+      | Vertex _ -> inv
       | Component (v, rest) ->
         let invariant =
           match Analysis.M.find v result with
@@ -730,7 +706,7 @@ module Make
     let rec live hl wto =
       let open Graph.WeakTopological in
       match wto with
-      | Vertex v -> hl
+      | Vertex _ -> hl
       | Component (v, rest) ->
         fold_left live ((v, loop_references wto)::hl) rest
     in

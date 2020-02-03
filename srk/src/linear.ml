@@ -237,14 +237,6 @@ let interlace_columns m n =
     (IntSet.union (QQMatrix.row_set m) (QQMatrix.row_set n))
     QQMatrix.zero
 
-(* Inverse of interlace_columns *)
-let deinterlace_columns m =
-  BatEnum.fold (fun (a, b) (i, row) ->
-      let (u, v) = deinterlace_vec row in
-      (QQMatrix.add_row i u a, QQMatrix.add_row i v b))
-    (QQMatrix.zero, QQMatrix.zero)
-    (QQMatrix.rowsi m)
-
 let intersect_rowspace a b =
   (* Create a system lambda_1*A - lambda_2*B = 0.  lambda_1's occupy even
      columns and lambda_2's occupy odd. *)
@@ -740,23 +732,31 @@ module PartialLinearMap = struct
 
   module IntMap = SrkUtil.Int.Map
 
-  (* Rewrite map so that each row belongs to the domain *)
+  (* After normalization, we have:
+     1. the vectors in guard are linearly independent
+     2. map sends every vector orthogonal to the domain to 0 *)
   let normalize f =
-    let rewrite =
-      List.fold_left
-        (fun m (k,v) -> IntMap.add k v m)
-        IntMap.empty
-        (orient (fun _ -> false) f.guard)
+    let guard = VS.basis f.guard in
+    let mG = VS.matrix_of guard in
+    let dims =
+      SrkUtil.Int.Set.elements (SrkUtil.Int.Set.union (M.column_set f.map) (M.column_set mG))
     in
-    let subst row =
-      BatEnum.fold
-        (fun v (coeff,dim) ->
-           try V.add v (V.scalar_mul coeff (IntMap.find dim rewrite))
-           with Not_found -> V.add_term coeff dim v)
-        V.zero
-        (V.enum row)
+    let dom = nullspace mG dims in
+    (* Expansion in the basis formed by the domain and its orthogonal
+       complement (guard). *)
+    let basis_change =
+      match divide_left (M.identity dims) (M.transpose (VS.matrix_of (dom @ guard))) with
+      | None -> assert false
+      | Some cob -> cob
     in
-    { f with map = QQMatrix.map_rows subst f.map }
+    let map =
+      M.mul (M.mul f.map (M.transpose (VS.matrix_of dom))) basis_change
+    in
+    dom |> List.iter (fun x ->
+        assert (V.equal (vector_right_mul f.map x) (vector_right_mul map x)));
+    f.guard |> List.iter (fun x ->
+        assert (V.equal V.zero (vector_right_mul map x)));
+    { map; guard }
 
   let equal f g =
     M.equal f.map g.map
@@ -807,7 +807,7 @@ module PartialLinearMap = struct
     let module M = QQMatrix in
     let module V = QQVector in
     let module VS = QQVectorSpace in
-    let rec fix mA mB mT =
+    let rec fix mA mB =
       let mS = max_rowspace_projection mA mB in
       (* Since matrices are sparse, need to account for 0-rows of B -- they
          should always be in the max rowspace projection *)
@@ -826,16 +826,12 @@ module PartialLinearMap = struct
         |> fst
       in
       if M.nb_rows mB = M.nb_rows mS then
-        (mA, mB, mT)
+        (mA, mB)
       else
-        fix (M.mul mT' mA) (M.mul mT' mB) (M.mul mT' mT)
+        fix (M.mul mT' mA) (M.mul mT' mB)
 
     in
-    let dims =
-      SrkUtil.Int.Set.elements
-        (SrkUtil.Int.Set.union (M.row_set mA) (M.row_set mB))
-    in
-    let (mA, mB, mE) = fix mA mB (M.identity dims) in
+    let (mA, mB) = fix mA mB in
 
     (* S is the simulation matrix *)
     let mS = VS.matrix_of (VS.simplify (VS.basis (VS.of_matrix mA))) in

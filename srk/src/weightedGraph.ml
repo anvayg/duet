@@ -1,4 +1,3 @@
-open BatHashcons
 open Pathexpr
 
 include Log.Make(struct let name = "srk.weightedGraph" end)
@@ -182,12 +181,32 @@ let fold_vertex f wg = U.fold_vertex f wg.graph
 let iter_vertex f wg = U.iter_vertex f wg.graph
 let mem_edge wg u v = M.mem (u, v) wg.labels
 
+(* Cut graph reduces a weighted graph to only those vertices in c, while preserving all weighted paths between pairs of vertices in c *)
+let cut_graph wg c =
+  let module Set = SrkUtil.Int.Set in
+  let cut_set = Set.of_list c in
+  let pre_vertex v = v in
+  let post_vertex =
+     let max = Set.fold max cut_set (max_vertex wg) + 1 in
+     Memo.memo (fun v -> if Set.mem v cut_set then v + max else v)
+  in
+  let path_graph =
+    let pg = Set.fold (fun v pg -> add_vertex (add_vertex pg (pre_vertex v)) (post_vertex v)) cut_set (empty wg.algebra) in
+    let pg = fold_vertex (fun v pg -> add_vertex pg v) wg pg in
+    fold_edges (fun (u, w, v) pg -> add_edge pg (pre_vertex u) w (post_vertex v)) wg pg
+  in
+  Set.fold (fun u cg ->
+    Set.fold (fun v cg ->
+      add_edge (add_vertex cg v) u (path_weight path_graph (pre_vertex u) (post_vertex v)) v
+    ) cut_set (add_vertex cg u)
+  ) cut_set (empty wg.algebra)
+
 (* Line graphs swaps vertices and edges *)
 module LineGraph = struct
   type t = U.t
   module V = IntPair
   let iter_vertex f graph = U.iter_edges (fun x y -> f (x, y)) graph
-  let iter_succ f graph (src, dst) =
+  let iter_succ f graph (_, dst) =
     U.iter_succ
       (fun succ -> f (dst, succ))
       graph
@@ -442,7 +461,7 @@ module MakeRecGraph (W : Weight) = struct
       (* Create a fresh call vertex to serve as entry.  It will have an edge
            to every other call *)
       let callgraph_entry =
-        let (s, t) = CallSet.min_elt calls in
+        let s = fst (CallSet.min_elt calls) in
         (s-1, s-1)
       in
       (* Compute summaries *************************************************)
@@ -543,7 +562,7 @@ module MakeRecGraph (W : Weight) = struct
       (* For each (s,t) call containing a call (s',t'), add an edge from s to s'
          with the path weight from s to call(s',t'). *)
       CallSet.fold
-        (fun (src, tgt) query' -> add_call_edges query' src)
+        (fun (src, _) query' -> add_call_edges query' src)
         calls
         query
     end
